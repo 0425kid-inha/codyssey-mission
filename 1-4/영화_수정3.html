@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>내 영화 티어리스트</title>
+  <style>
+    :root { --paper:#faf8f3; --ink:#242922; --muted:#5f685d; --line:#d9dad1; --green:#276453; --sage:#e3eee7; --peach:#f2e6dc; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--paper); font-family:system-ui,-apple-system,sans-serif; line-height:1.6;  }
+    main { width:min(100% - 32px,900px); margin:32px auto 48px; } /* 메인 폭 약간 확대 */
+    header { display:flex; align-items:start; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+    h1 { margin:0; font-size:clamp(26px,5vw,34px); line-height:1.25; letter-spacing:-.03em; }
+    .sub { margin:10px 0 0; color:var(--muted); max-width:46ch; }
+    .tools { display:flex; flex-wrap:wrap; gap:8px; width:100%; margin-top:20px; }
+    .tools input { min-width:0; flex:1 1 160px; border:1.5px solid var(--line); border-radius:12px; padding:11px 12px; font:inherit; }
+    button { font:inherit; cursor:pointer; }
+    .tools button { padding:10px 15px; border:1px solid var(--green); border-radius:12px; font-weight:700; background:var(--green); color:#fff; }
+    .tools .reset { color:var(--green); background:#fff; }
+    #message { min-height:26px; margin:14px 0; font-size:14px; color:var(--muted); }
+    
+    /* 티어표 전체 크기 확대 */
+    .tiers { display:grid; gap:12px; }
+    .row { display:flex; min-height:110px; background:#fff; border:1.5px solid var(--line); border-radius:14px; overflow:hidden; }
+    .row.over { outline:3px solid var(--green); outline-offset:1px; }
+    
+    .label { width:80px; flex-shrink:0; border:0; color:white; font-size:32px; font-weight:800; padding:12px 4px; }
+    .S .label { background:#a55239; } .A .label { background:#b4763e; } .B .label { background:#276453; } .C .label { background:#67725d; }
+    
+    .drop { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-content:flex-start; gap:10px; padding:15px; min-height:108px; }
+    .pool { margin-top:22px; }
+    .pool-head { margin:0 0 8px; border:0; padding:0; background:transparent; color:var(--muted); font-size:17px; font-weight:700; text-align:left; }
+    #pool { border:1.5px dashed var(--line); border-radius:14px; background:#fff; }
+    
+    /* 영화 카드 크기 확대 및 삭제 버튼 호버 설정 */
+    .card { 
+      width:120px; min-height:80px; padding:10px; border:1px solid transparent; border-radius:10px; 
+      font-size:15px; font-weight:650; line-height:1.35; overflow-wrap:anywhere; color:var(--ink); 
+      cursor:grab; position: relative; transition: transform 0.1s;
+      display: flex; align-items: center; justify-content: center; text-align: center;
+    }
+    .card:hover { transform: translateY(-2px); }
+    .card[aria-pressed="true"] { outline:3px solid var(--green); outline-offset:2px; }
+    
+    /* 삭제 버튼 개선: 회색 & 호버 시에만 노출 */
+    .del-btn {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 22px;
+      height: 22px;
+      background: #adb5bd; /* 회색으로 변경 */
+      color: white;
+      border-radius: 50%;
+      display: none; /* 평소에는 숨김 */
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: bold;
+      border: 2px solid #fff;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      z-index: 10;
+    }
+    .card:hover .del-btn {
+      display: flex; /* 카드 호버 시 삭제 버튼 표시 */
+    }
+    .del-btn:hover { background: #868e96; }
+
+    .note { font-size:13px; color:var(--muted); margin-top:18px; }
+    @media(max-width:420px) { 
+        .label { width:60px; font-size: 24px; } 
+        .card { width:100px; min-height: 70px; } 
+        .drop { padding:10px; gap:8px; } 
+        .del-btn { display: flex; opacity: 0.5; } /* 모바일은 호버가 없으므로 반투명하게 항상 표시 */
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header><div><h1>내 영화 티어리스트</h1><p class="sub">영화를 선택한 뒤 등급(S·A·B·C)을 누르거나 카드를 끌어서 옮기세요.</p></div></header>
+    <form class="tools" id="add-form">
+      <input id="title" aria-label="영화 제목" placeholder="영화 제목 추가" maxlength="80">
+      <button type="submit">추가</button>
+      <button type="button" class="reset" id="reset">처음으로</button>
+    </form>
+    <p id="message" role="status">영화를 선택해 등급을 나누어 보세요.</p>
+    <section class="tiers" id="tiers" aria-label="영화 등급"></section>
+    <section class="pool" aria-label="아직 안 정한 영화">
+      <button class="pool-head" id="pool-label" type="button">아직 안 정한 영화</button>
+      <div class="drop" id="pool" data-tier="pool"></div>
+    </section>
+    <p class="note">브라우저를 닫아도 목록이 유지됩니다.</p>
+  </main>
+  <script>
+    const KEY = "codyssey-movie-tier-v3";
+    const LEVELS = ['S', 'A', 'B', 'C', 'pool'];
+    const TITLES = ["기생충","인터스텔라","라라랜드","센과 치히로의 행방불명","어벤져스: 엔드게임","범죄도시","타이타닉","토이 스토리"];
+    const COLORS = ["#f2e6dc","#e3eee7","#ede7f6","#fcefd9","#e2ecf4","#f6e3e3"];
+    const initial = () => ({ nextId: TITLES.length + 1, items: TITLES.map((title,index) => ({ id: 'm' + (index + 1), title, tier: 'pool' })) });
+    
+    let state = initial();
+    let selected = null;
+
+    try {
+      const stored = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (stored && Array.isArray(stored.items)) state = stored;
+    } catch {}
+
+    function showMessage(message) { document.querySelector('#message').textContent = message; }
+    
+    function save() {
+      localStorage.setItem(KEY, JSON.stringify(state));
+    }
+
+    function deleteMovie(id) {
+      state.items = state.items.filter(item => item.id !== id);
+      if (selected === id) selected = null;
+      save();
+      render();
+      showMessage('영화를 삭제했습니다.');
+    }
+
+    function move(id,tier) {
+      const item = state.items.find(item => item.id === id);
+      if (!item) return;
+      item.tier = tier; selected = null; save(); render();
+    }
+
+    function card(item,index) {
+      const element = document.createElement('button');
+      element.type = 'button'; element.className = 'card'; element.draggable = true;
+      element.style.backgroundColor = COLORS[index % COLORS.length];
+      element.setAttribute('aria-pressed',String(selected === item.id));
+      
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = item.title;
+      element.appendChild(titleSpan);
+
+      const delBtn = document.createElement('span');
+      delBtn.className = 'del-btn';
+      delBtn.innerHTML = '&minus;';
+      delBtn.onclick = (e) => { e.stopPropagation(); deleteMovie(item.id); };
+      element.appendChild(delBtn);
+
+      element.onclick = (e) => {
+        e.stopPropagation();
+        selected = selected === item.id ? null : item.id;
+        render();
+      };
+      element.ondragstart = (e) => { e.dataTransfer.setData('text/plain', item.id); };
+      return element;
+    }
+
+    function wireDrop(element,tier) {
+      element.ondragover = (e) => { e.preventDefault(); element.closest('.row')?.classList.add('over'); };
+      element.ondragleave = () => { element.closest('.row')?.classList.remove('over'); };
+      element.ondrop = (e) => { 
+        e.preventDefault(); 
+        element.closest('.row')?.classList.remove('over');
+        move(e.dataTransfer.getData('text/plain'), tier); 
+      };
+      element.onclick = () => { if (selected) move(selected, tier); };
+    }
+
+    function render() {
+      const tiers = document.querySelector('#tiers'); tiers.replaceChildren();
+      LEVELS.filter(v => v !== 'pool').forEach(tier => {
+        const row = document.createElement('div'); row.className = 'row ' + tier;
+        const label = document.createElement('button'); label.className = 'label'; label.textContent = tier;
+        label.onclick = () => { if (selected) move(selected, tier); };
+        
+        const drop = document.createElement('div'); drop.className = 'drop';
+        state.items.filter(m => m.tier === tier).forEach((m, i) => drop.append(card(m, i)));
+        wireDrop(drop, tier); row.append(label, drop); tiers.append(row);
+      });
+      const pool = document.querySelector('#pool'); pool.replaceChildren();
+      state.items.filter(m => m.tier === 'pool').forEach((m, i) => pool.append(card(m, i)));
+    }
+
+    wireDrop(document.querySelector('#pool'), 'pool');
+    document.querySelector('#add-form').onsubmit = (e) => {
+      e.preventDefault();
+      const input = document.querySelector('#title');
+      if (!input.value.trim()) return;
+      state.items.push({ id: 'm' + state.nextId++, title: input.value.trim(), tier: 'pool' });
+      save(); render(); input.value = '';
+    };
+    document.querySelector('#reset').onclick = () => {
+      if(confirm('초기화할까요?')) { state = initial(); save(); render(); }
+    };
+
+    render();
+  </script>
+</body>
+</html>

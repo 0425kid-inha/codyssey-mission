@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>나만의 영화 티어리스트</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --card-bg: #2d2d2d;
+            --text-color: #ffffff;
+            --accent-color: #4a90e2;
+        }
+
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { margin-bottom: 20px; }
+
+        /* 입력 및 도구 영역 */
+        .controls {
+            width: 100%;
+            max-width: 800px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+
+        input[type="text"] {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #333;
+            color: white;
+        }
+
+        button {
+            padding: 8px 15px;
+            border-radius: 4px;
+            border: none;
+            background: var(--accent-color);
+            color: white;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        button:hover { opacity: 0.8; }
+        .btn-danger { background: #e74c3c; }
+        .btn-secondary { background: #555; }
+
+        /* 티어 컨테이너 */
+        #tier-container {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .tier-row {
+            display: flex;
+            min-height: 100px;
+            background: #222;
+            border: 1px solid #333;
+        }
+
+        .tier-label {
+            width: 100px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+            font-weight: bold;
+            text-align: center;
+            position: relative;
+        }
+
+        .tier-label .tier-btns {
+            display: flex;
+            gap: 4px;
+            margin-top: 5px;
+        }
+
+        .tier-label button {
+            padding: 2px 5px;
+            font-size: 10px;
+        }
+
+        .tier-content {
+            flex: 1;
+            display: flex;
+            flex-wrap: wrap;
+            padding: 10px;
+            gap: 10px;
+            min-height: 80px;
+        }
+
+        /* 영화 카드 */
+        .movie-card {
+            width: 90px;
+            height: 120px;
+            background: var(--card-bg);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 5px;
+            text-align: center;
+            font-size: 13px;
+            cursor: grab;
+            position: relative;
+            user-select: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .movie-card:active { cursor: grabbing; }
+
+        .btn-del-card {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #ff4757;
+            color: white;
+            border: none;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* 모달 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: #333;
+            padding: 20px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 400px;
+        }
+
+        .modal-content textarea {
+            width: 100%;
+            height: 100px;
+            margin: 10px 0;
+            background: #222;
+            color: white;
+            border: 1px solid #444;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        /* 프린트 설정 */
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; color: black; }
+            .tier-row { border: 1px solid #000; page-break-inside: avoid; }
+            .movie-card { border: 1px solid #ccc; color: black; background: #eee; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🎬 영화 티어리스트</h1>
+
+    <div class="controls no-print">
+        <input type="text" id="movie-input" placeholder="영화 제목 입력">
+        <button onclick="addMovie()">영화 추가</button>
+        <input type="text" id="tier-input" placeholder="새 티어 이름">
+        <button onclick="addTier()" class="btn-secondary">티어 추가</button>
+    </div>
+
+    <div id="tier-container">
+        <!-- 티어들이 여기에 생성됩니다 -->
+    </div>
+
+    <div class="controls no-print" style="margin-top: 30px;">
+        <button onclick="exportJSON()" class="btn-secondary">JSON 저장</button>
+        <button onclick="document.getElementById('file-input').click()" class="btn-secondary">JSON 불러오기</button>
+        <button onclick="window.print()" class="btn-secondary">PDF 저장</button>
+        <button onclick="resetData()" class="btn-danger">초기화</button>
+        <input type="file" id="file-input" style="display:none" onchange="importJSON(event)">
+    </div>
+
+    <!-- 메모 모달 -->
+    <div id="memo-modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modal-title">영화 메모</h3>
+            <textarea id="memo-text" placeholder="감상평을 남겨보세요..."></textarea>
+            <div style="display:flex; gap:10px; justify-content: flex-end;">
+                <button onclick="closeModal()" class="btn-secondary">취소</button>
+                <button onclick="saveMemo()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let state = {
+            nextId: 1,
+            tiers: [
+                { id: 't1', name: 'S', color: '#ff7f50' },
+                { id: 't2', name: 'A', color: '#ffbe76' },
+                { id: 't3', name: 'B', color: '#badc58' },
+                { id: 't4', name: 'C', color: '#7ed6df' }
+            ],
+            items: [],
+            pool: [] // 미분류 영화들
+        };
+
+        let currentEditingMovieId = null;
+        let pressTimer = null;
+
+        // 초기화 및 마이그레이션
+        function init() {
+            const saved = localStorage.getItem('movieTierData');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                // 구버전 데이터(배열)인 경우 마이그레이션
+                if (Array.isArray(parsed)) {
+                    state.items = parsed.map((m, i) => ({
+                        id: i + 1,
+                        title: m.title,
+                        tierId: m.level === 'pool' ? 'pool' : state.tiers.find(t => t.name === m.level)?.id || 'pool',
+                        memo: ''
+                    }));
+                    state.nextId = state.items.length + 1;
+                } else {
+                    state = parsed;
+                }
+            } else {
+                // 기본 데이터
+                ['기생충', '올드보이', '괴물', '인셉션'].forEach(title => addMovie(title));
+            }
+            render();
+        }
+
+        function save() {
+            localStorage.setItem('movieTierData', JSON.stringify(state));
+        }
+
+        // 영화 추가
+        function addMovie(title) {
+            const input = document.getElementById('movie-input');
+            const movieTitle = title || input.value.trim();
+            if (!movieTitle) return;
+
+            state.items.push({
+                id: state.nextId++,
+                title: movieTitle,
+                tierId: 'pool',
+                memo: ''
+            });
+            if (!title) input.value = '';
+            save();
+            render();
+        }
+
+        // 티어 추가
+        function addTier() {
+            const input = document.getElementById('tier-input');
+            const name = input.value.trim();
+            if (!name) return;
+            if (state.tiers.some(t => t.name === name)) {
+                alert('이미 존재하는 티어 이름입니다.');
+                return;
+            }
+
+            const randomColor = `hsl(${Math.random() * 360}, 70%, 60%)`;
+            state.tiers.push({ id: 't' + Date.now(), name, color: randomColor });
+            input.value = '';
+            save();
+            render();
+        }
+
+        // 티어 삭제
+        function deleteTier(tierId) {
+            if (!confirm('티어를 삭제하시겠습니까? 내부 영화는 미분류로 이동합니다.')) return;
+            state.items.forEach(item => {
+                if (item.tierId === tierId) item.tierId = 'pool';
+            });
+            state.tiers = state.tiers.filter(t => t.id !== tierId);
+            save();
+            render();
+        }
+
+        // 영화 삭제
+        function deleteMovie(id) {
+            state.items = state.items.filter(m => m.id !== id);
+            save();
+            render();
+        }
+
+        // 렌더링
+        function render() {
+            const container = document.getElementById('tier-container');
+            container.innerHTML = '';
+
+            // 티어 행 생성
+            state.tiers.concat([{ id: 'pool', name: '미분류', color: '#555' }]).forEach(tier => {
+                const row = document.createElement('div');
+                row.className = 'tier-row';
+                
+                const label = document.createElement('div');
+                label.className = 'tier-label';
+                label.style.backgroundColor = tier.color;
+                label.innerHTML = `<span>${tier.name}</span>`;
+                
+                if (tier.id !== 'pool') {
+                    const btnGroup = document.createElement('div');
+                    btnGroup.className = 'tier-btns no-print';
+                    btnGroup.innerHTML = `<button onclick="deleteTier('${tier.id}')">-</button>`;
+                    label.appendChild(btnGroup);
+                }
+
+                const content = document.createElement('div');
+                content.className = 'tier-content';
+                content.dataset.tierId = tier.id;
+                content.ondragover = e => e.preventDefault();
+                content.ondrop = handleDrop;
+
+                // 해당 티어의 영화들 배치
+                state.items.filter(m => m.tierId === tier.id).forEach(movie => {
+                    const card = document.createElement('div');
+                    card.className = 'movie-card';
+                    card.draggable = true;
+                    card.innerText = movie.title;
+                    card.dataset.id = movie.id;
+                    
+                    // 삭제 버튼
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'btn-del-card no-print';
+                    delBtn.innerText = '-';
+                    delBtn.onclick = (e) => { e.stopPropagation(); deleteMovie(movie.id); };
+                    card.appendChild(delBtn);
+
+                    // 드래그 이벤트
+                    card.ondragstart = e => e.dataTransfer.setData('text/plain', movie.id);
+                    
+                    // 메모 이벤트 (더블클릭 & 롱프레스)
+                    card.ondblclick = () => openModal(movie.id);
+                    card.ontouchstart = (e) => {
+                        pressTimer = setTimeout(() => {
+                            e.preventDefault();
+                            openModal(movie.id);
+                        }, 500);
+                    };
+                    card.ontouchend = () => clearTimeout(pressTimer);
+
+                    content.appendChild(card);
+                });
+
+                row.appendChild(label);
+                row.appendChild(content);
+                container.appendChild(row);
+            });
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            const movieId = parseInt(e.dataTransfer.getData('text/plain'));
+            const newTierId = e.currentTarget.dataset.tierId;
+            
+            const item = state.items.find(m => m.id === movieId);
+            if (item) {
+                item.tierId = newTierId;
+                save();
+                render();
+            }
+        }
+
+        // 모달 제어
+        function openModal(id) {
+            const movie = state.items.find(m => m.id === id);
+            currentEditingMovieId = id;
+            document.getElementById('modal-title').innerText = `${movie.title} - 메모`;
+            document.getElementById('memo-text').value = movie.memo || '';
+            document.getElementById('memo-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('memo-modal').style.display = 'none';
+        }
+
+        function saveMemo() {
+            const item = state.items.find(m => m.id === currentEditingMovieId);
+            if (item) {
+                item.memo = document.getElementById('memo-text').value;
+                save();
+            }
+            closeModal();
+        }
+
+        // 데이터 도구
+        function exportJSON() {
+            const dataStr = JSON.stringify(state, null, 2);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'movie-tier-list.json';
+            a.click();
+        }
+
+        function importJSON(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    state = JSON.parse(event.target.result);
+                    save();
+                    render();
+                } catch (err) {
+                    alert('올바른 JSON 파일이 아닙니다.');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function resetData() {
+            if (confirm('모든 데이터를 초기화할까요?')) {
+                localStorage.removeItem('movieTierData');
+                location.reload();
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
