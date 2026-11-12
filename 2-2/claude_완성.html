@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>나만의 작은 어항</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0b0b12;color:#e8eaf0;font:14px/1.4 system-ui,"Malgun Gothic","Apple SD Gothic Neo",sans-serif}
+#app{display:flex;height:100%}
+#view{flex:1;position:relative;min-width:0}
+#view canvas{display:block;width:100%;height:100%}
+#bar{position:absolute;top:12px;left:12px;display:flex;gap:8px;flex-wrap:wrap}
+#panel{width:340px;overflow:auto;background:#161823;padding:14px;border-left:1px solid #2a2d3d}
+button{font:inherit;color:inherit;background:#262a3b;border:1px solid #3a3f56;border-radius:8px;padding:6px 10px;cursor:pointer}
+button:hover:not(:disabled){background:#33384f}
+button:disabled{opacity:.4;cursor:default}
+button.on{background:#3b6cf0;border-color:#6b94ff}
+h3{margin:14px 0 6px;font-size:13px;color:#9aa3c7}
+.row{display:flex;flex-wrap:wrap;gap:6px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;border:1px solid #fff5}
+.li{display:flex;justify-content:space-between;align-items:center;margin:3px 0;padding:3px 6px;background:#1e2130;border-radius:6px}
+label.ck{display:flex;gap:6px;padding:5px 8px;background:#262a3b;border-radius:8px;border:1px solid #3a3f56;cursor:pointer}
+.big{width:100%;margin-bottom:8px;padding:12px}
+#toast{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:#000c;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .3s;pointer-events:none}
+@media(max-width:800px){#app{flex-direction:column}#panel{width:100%;height:45%;border-left:0;border-top:1px solid #2a2d3d}}
+</style></head><body>
+<div id="app"><div id="view">
+<div id="bar"><button id="vroom">방 전체</button><button id="vtank">어항 정면</button><button id="blight"></button><button id="breset">어항 초기화</button></div>
+<div id="toast"></div></div><div id="panel"></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=s=>document.querySelector(s),KEY='tinyAquarium_v1';
+const LC={white:0xffffff,blue:0x4aa8ff,purple:0xa56bff,mint:0x5df2c8,pink:0xff6fb5};
+const LN={white:'화이트',blue:'블루',purple:'퍼플',mint:'민트',pink:'핑크'};
+const SH={rectangle:'기본 사각형',cube:'큐브형',cylinder:'원통형',rounded:'둥근 모서리형'};
+const SUB={lightSand:['밝은 모래',0xe8dcb8],blackGravel:['검은 자갈',0x3a3a40],brownSoil:['갈색 소일',0x4a2e1e]};
+const DEC={plants:'수초',rocks:'돌',driftwood:'유목',hideout:'작은 은신처'};
+const VAR={guppy:{red:['레드',0xd8322c,0xff7a4a],blue:['블루',0x2f5fd8,0x7fb8ff],yellow:['옐로',0xe8c52e,0xfff08a],mosaic:['모자이크',0x59b58f,0xd05ab8]},
+shrimp:{cherry:['체리',0xc9222b],bluedream:['블루드림',0x2a55cc],yellow:['옐로',0xe8d52e],snowball:['스노우볼',0xf2f2f2]},
+jellyfish:{dome:['기본 반구형'],bell:['작은 종형'],umbrella:['넓은 우산형']}};
+const KIND={guppy:'구피',shrimp:'새우',jellyfish:'해파리'};
+const DIM={rectangle:{w:2,d:.9,h:1.2},cube:{w:1.2,d:1.2,h:1.2},cylinder:{w:1.4,d:1.4,h:1.6},rounded:{w:1.4,d:1.1,h:1.5}};
+const TS={freshwater:['rectangle','cube'],jellyfish:['cylinder','rounded']};
+const hex=n=>'#'+n.toString(16).padStart(6,'0');
+
+/* ---------- 상태 / 저장 ---------- */
+const def=()=>({version:1,roomLightOn:true,aquarium:null});
+const newAq=t=>t==='freshwater'?{type:t,tankShape:'rectangle',substrate:'lightSand',decorations:{plants:false,rocks:false,driftwood:false,hideout:false},lightColor:'white',lightLevel:40,creatures:[]}:{type:t,tankShape:'cylinder',lightColor:'blue',lightLevel:40,creatures:[]};
+function sanitize(r){const s=def();if(!r||typeof r!=='object')return s;s.roomLightOn=r.roomLightOn!==false;const a=r.aquarium;
+ if(a&&TS[a.type]){const n=newAq(a.type);if(typeof a.lightLevel==='number'&&isFinite(a.lightLevel))n.lightLevel=Math.max(10,Math.min(100,a.lightLevel));if(TS[a.type].includes(a.tankShape))n.tankShape=a.tankShape;
+  if(a.type==='freshwater'){if(SUB[a.substrate])n.substrate=a.substrate;for(const k in DEC)n.decorations[k]=!!(a.decorations&&a.decorations[k])}
+  else if(LC[a.lightColor])n.lightColor=a.lightColor;
+  const ok=a.type==='freshwater'?['guppy','shrimp']:['jellyfish'],ids=new Set();
+  if(Array.isArray(a.creatures))for(const c of a.creatures){if(n.creatures.length>=5)break;
+   if(c&&ok.includes(c.kind)&&VAR[c.kind][c.variant]&&typeof c.id==='string'&&!ids.has(c.id)){ids.add(c.id);n.creatures.push({id:c.id,kind:c.kind,variant:c.variant})}}
+  s.aquarium=n}return s}
+let S;try{S=sanitize(JSON.parse(localStorage.getItem(KEY)))}catch(e){S=def()}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+
+/* ---------- Three.js 기본 ---------- */
+const view=$('#view'),R=new THREE.WebGLRenderer({antialias:true});
+R.setPixelRatio(Math.min(devicePixelRatio,2));view.prepend(R.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x07070c);
+const cam=new THREE.PerspectiveCamera(45,1,.1,60);
+const M=(c,o={})=>new THREE.MeshStandardMaterial({color:c,flatShading:true,roughness:.85,...o});
+function box(w,h,d,c,x,y,z,p=scene){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),M(c));m.position.set(x,y,z);p.add(m);return m}
+
+/* 방 */
+box(10,.2,8,0x8a6a4a,0,-.1,1);box(10,5,.2,0xcdbfa8,0,2.5,-3.1);box(.2,5,8,0xc4b59c,-5.1,2.5,1);box(.2,5,8,0xc4b59c,5.1,2.5,1);
+box(4,.02,2.5,0x5a4a7a,0,.01,1.2);
+box(2.6,2.7,.1,0xf0ece0,-2.5,3.2,-3);
+for(let i=0;i<5;i++)box(.5,2.8,.12,i%2?0x1c1f33:0x262a48,-2.5+(i-2)*.5,3.2,-2.88);
+box(3,.06,.06,0x333333,-2.5,4.7,-2.8);
+box(2.4,.1,1.1,0x7a5a3a,-2.5,1.1,-2.35);
+for(const sx of[-1,1])for(const sz of[-1,1])box(.1,1.05,.1,0x5a3f27,-2.5+sx*1.1,.525,-2.35+sz*.45);
+box(.4,.05,.25,0x222222,-2.5,1.18,-2.5);box(.08,.3,.08,0x222222,-2.5,1.33,-2.5);box(1.1,.65,.06,0x15151c,-2.5,1.8,-2.55);
+const scr=box(1,.55,.01,0,-2.5,1.8,-2.51);scr.material=new THREE.MeshBasicMaterial({color:0x2f5f95});
+box(.7,.03,.22,0x2a2a33,-2.5,1.17,-2);
+box(.7,.1,.7,0x2f4f6f,-2.5,.8,-1.3);box(.7,.8,.1,0x2f4f6f,-2.5,1.25,-.95);box(.1,.5,.1,0x222222,-2.5,.5,-1.3);box(.7,.06,.7,0x222222,-2.5,.05,-1.3);
+box(3,.12,1.6,0x6b4a2e,2.5,1.74,-2.2);box(.1,.5,1.2,0x4a3320,1.3,1.4,-2.4);box(.1,.5,1.2,0x4a3320,3.7,1.4,-2.4);
+
+/* 조명 (방 / 어항 분리) */
+const amb=new THREE.AmbientLight(0x6a6f9a,.14),hemi=new THREE.HemisphereLight(0xfff0d8,0x554433,.35),room=new THREE.PointLight(0xffd9a0,.75,18,1);
+room.position.set(0,4.6,1.5);scene.add(amb,hemi,room);
+
+/* 어항 */
+const tank=new THREE.Group();tank.position.set(2.5,1.8,-2.15);const SC=.5;tank.scale.setScalar(SC);scene.add(tank);
+const shell=new THREE.Group(),deco=new THREE.Group(),critG=new THREE.Group(),tl=new THREE.PointLight(0xffffff,1,4,1);
+tank.add(shell,deco,critG,tl);
+function shapeGeo(sh){const D=DIM[sh];let g;
+ if(sh==='rectangle'||sh==='cube')g=new THREE.BoxGeometry(D.w,D.h,D.d);
+ else if(sh==='cylinder')g=new THREE.CylinderGeometry(D.w/2,D.w/2,D.h,20);
+ else{const r=.25,x=D.w/2,y=D.d/2,s=new THREE.Shape();s.moveTo(-x+r,-y);s.lineTo(x-r,-y);s.quadraticCurveTo(x,-y,x,-y+r);s.lineTo(x,y-r);s.quadraticCurveTo(x,y,x-r,y);s.lineTo(-x+r,y);s.quadraticCurveTo(-x,y,-x,y-r);s.lineTo(-x,-y+r);s.quadraticCurveTo(-x,-y,-x+r,-y);
+  g=new THREE.ExtrudeGeometry(s,{depth:D.h,bevelEnabled:false,curveSegments:4});g.rotateX(-Math.PI/2);return g}
+ g.translate(0,D.h/2,0);return g}
+let hood;
+function lightApply(){const a=S.aquarium;if(!a)return;const lv=a.lightLevel/100;tl.intensity=lv*1.2*(a.type==='freshwater'?1:1.2);if(hood)hood.material.color.setHex(LC[a.lightColor]).multiplyScalar(.35+.65*lv);objs.forEach(o=>o.mat&&jellyColors(o))}
+function rebuildTank(){const a=S.aquarium;shell.clear();deco.clear();if(!a){tank.visible=false;return}tank.visible=true;
+ const D=DIM[a.tankShape],g=shapeGeo(a.tankShape),col=LC[a.lightColor],fw=a.type==='freshwater',t=fw?.18:0,w=D.w,d=D.d;
+ shell.add(new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0xbfe6f2,transparent:true,opacity:.14,depthWrite:false,side:THREE.DoubleSide,roughness:.1})));
+ const water=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:fw?0x7cc8e0:col,transparent:true,opacity:fw?.08:.12,depthWrite:false}));water.scale.set(.97,.94,.97);shell.add(water);
+ shell.add(new THREE.LineSegments(new THREE.EdgesGeometry(g,35),new THREE.LineBasicMaterial({color:0xdff6ff,transparent:true,opacity:.6})));
+ const hg=a.tankShape==='cylinder'?new THREE.CylinderGeometry(w/2+.02,w/2+.02,.06,20):new THREE.BoxGeometry(w+.04,.06,d+.04);
+ hood=new THREE.Mesh(hg,new THREE.MeshBasicMaterial({color:col}));hood.position.y=D.h+.03;shell.add(hood);
+ tl.color.setHex(col);tl.position.set(0,D.h-.1,0);lightApply();
+ if(!fw)return;
+ const sub=new THREE.Mesh(new THREE.BoxGeometry(w-.03,t,d-.03),M(SUB[a.substrate][1]));sub.position.y=t/2;shell.add(sub);
+ const dc=a.decorations;
+ if(dc.plants){const p=new THREE.Group();p.position.set(-.32*w,t,-.2*d);for(let i=0;i<6;i++){const h=.45+.1*(i%3),m=new THREE.Mesh(new THREE.ConeGeometry(.05,h,4),M(i%2?0x2e9a4a:0x47b85c));m.position.set(Math.cos(i*1.05)*.09,h/2,Math.sin(i*1.05)*.09);m.rotation.z=i%2?.1:-.1;p.add(m)}deco.add(p)}
+ if(dc.rocks){const p=new THREE.Group();p.position.set(.26*w,t,.2*d);[[.14,0,0,0x7a7d86],[.09,.15,.05,0x8d9099],[.07,-.12,.1,0x6a6d76]].forEach(([r,x,z,c])=>{const m=new THREE.Mesh(new THREE.DodecahedronGeometry(r),M(c));m.scale.y=.7;m.position.set(x,r*.6,z);p.add(m)});deco.add(p)}
+ if(dc.driftwood){const p=new THREE.Group();p.position.set(.2*w,t,-.22*d);p.rotation.y=.3;const m=new THREE.Mesh(new THREE.CylinderGeometry(.045,.05,.55,5),M(0x7b5a3c));m.rotation.z=Math.PI/2;m.position.y=.06;p.add(m);
+  const b=new THREE.Mesh(new THREE.CylinderGeometry(.025,.035,.25,5),M(0x8a6847));b.position.set(.1,.2,0);b.rotation.z=-.5;p.add(b);deco.add(p)}
+ if(dc.hideout){const p=new THREE.Group();p.position.set(-.25*w,t,.2*d);box(.36,.22,.26,0xc2703d,0,.11,0,p);box(.14,.12,.01,0x1a1008,0,.07,.131,p);box(.4,.04,.3,0x9a5530,0,.24,0,p);deco.add(p)}}
+
+/* ---------- 생물 ---------- */
+function bounds(k){const a=S.aquarium,D=DIM[a.tankShape],fw=a.type==='freshwater',sub=fw?.18:0,m=k==='guppy'?.2:k==='shrimp'?.14:.35;
+ const b={x:D.w/2-m,z:D.d/2-m,circ:a.tankShape==='cylinder',r:D.w/2-m};
+ if(k==='guppy'){b.y0=sub+.4*(D.h-sub);b.y1=D.h-.2}else if(k==='shrimp')b.y0=b.y1=sub+.04;else{b.y0=.35;b.y1=D.h-.3}return b}
+function rnd(b){let x,z;do{x=(Math.random()*2-1)*b.x;z=(Math.random()*2-1)*b.z}while(b.circ&&x*x+z*z>b.r*b.r);return new THREE.Vector3(x,b.y0+Math.random()*(b.y1-b.y0),z)}
+function clampP(b,p){p.x=Math.max(-b.x,Math.min(b.x,p.x));p.z=Math.max(-b.z,Math.min(b.z,p.z));p.y=Math.max(b.y0,Math.min(b.y1,p.y));
+ if(b.circ){const l=Math.hypot(p.x,p.z);if(l>b.r){p.x*=b.r/l;p.z*=b.r/l}}}
+function place(o){const b=bounds(o.c.kind);o.g.position.copy(rnd(b));o.t=rnd(b);o.wait=0}
+function jellyColors(o){const col=new THREE.Color(LC[S.aquarium.lightColor]);o.mat.emissive.copy(col);o.mat.emissiveIntensity=.1+.5*S.aquarium.lightLevel/100;o.mat.color.copy(col).lerp(new THREE.Color(1,1,1),.35)}
+function mk(c){const g=new THREE.Group(),o={c,g,t:new THREE.Vector3(),ph:Math.random()*6,wait:0,yaw:Math.random()*6};
+ if(c.kind==='guppy'){const v=VAR.guppy[c.variant],body=new THREE.Mesh(new THREE.SphereGeometry(.09,6,5),M(v[1]));body.scale.set(1.5,.9,.6);g.add(body);
+  const tp=new THREE.Group();tp.position.x=-.12;const tail=new THREE.Mesh(new THREE.ConeGeometry(.09,.16,4),M(v[2],{side:THREE.DoubleSide}));tail.rotation.z=Math.PI/2;tail.position.x=-.08;tail.scale.z=.3;tp.add(tail);g.add(tp);o.tail=tp;
+  for(const s of[-1,1]){const e=new THREE.Mesh(new THREE.SphereGeometry(.018,4,4),M(0x111111));e.position.set(.11,.03,s*.045);g.add(e)}
+  if(c.variant==='mosaic')for(let i=0;i<3;i++){const sp=new THREE.Mesh(new THREE.SphereGeometry(.035,4,4),M(v[2]));sp.position.set(-.04+i*.05,.05-.04*(i%2),0);sp.scale.z=1.4;g.add(sp)}}
+ else if(c.kind==='shrimp'){const col=VAR.shrimp[c.variant][1],body=new THREE.Mesh(new THREE.SphereGeometry(.05,6,5),M(col));body.scale.set(1.7,.8,.8);g.add(body);
+  const tl2=new THREE.Mesh(new THREE.SphereGeometry(.035,5,4),M(col));tl2.position.set(-.09,-.01,0);tl2.scale.set(1.3,.7,.9);g.add(tl2);
+  for(const s of[-1,1]){const an=new THREE.Mesh(new THREE.CylinderGeometry(.004,.004,.1,3),M(0xdddddd));an.position.set(.11,.02,s*.02);an.rotation.z=-1.2;g.add(an);
+   const e=new THREE.Mesh(new THREE.SphereGeometry(.012,4,4),M(0x111111));e.position.set(.08,.03,s*.03);g.add(e)}}
+ else{const col=new THREE.Color(LC[S.aquarium.lightColor]),cfg={dome:[.2,1],bell:[.13,1.5],umbrella:[.3,.55]}[c.variant];
+  const mat=o.mat=new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:.6,transparent:true,opacity:.75,flatShading:true,side:THREE.DoubleSide});jellyColors(o);
+  const bell=o.bell=new THREE.Mesh(new THREE.SphereGeometry(cfg[0],8,5,0,Math.PI*2,0,Math.PI/2),mat);bell.scale.y=cfg[1];g.add(bell);
+  o.tent=[];const n=c.variant==='umbrella'?7:5;for(let i=0;i<n;i++){const L=.18+.08*(i%2),pv=new THREE.Group(),a=i/n*Math.PI*2;
+   pv.position.set(Math.cos(a)*cfg[0]*.6,0,Math.sin(a)*cfg[0]*.6);const t=new THREE.Mesh(new THREE.CylinderGeometry(.008,.004,L,4),mat);t.position.y=-L/2;pv.add(t);g.add(pv);o.tent.push(pv)}}
+ critG.add(g);if(c.kind==='jellyfish')o.base=1;place(o);return o}
+let objs=[];
+function syncCrit(){const a=S.aquarium,ids=new Set(a?a.creatures.map(c=>c.id):[]);
+ objs=objs.filter(o=>{if(!ids.has(o.c.id)){critG.remove(o.g);return false}return true});
+ if(a)for(const c of a.creatures)if(!objs.find(o=>o.c.id===c.id))objs.push(mk(c));
+ objs.forEach(o=>o.mat&&jellyColors(o))}
+function upd(o,dt,T){const k=o.c.kind,b=bounds(k),g=o.g,sp={guppy:.18,shrimp:.05,jellyfish:.07}[k];let moving=false;
+ if(o.wait>0)o.wait-=dt;else{const d=o.t.clone().sub(g.position);if(k==='shrimp')d.y=0;const L=d.length();
+  if(L<.05){o.t=rnd(b);o.wait=k==='shrimp'?1+Math.random()*3:k==='guppy'?Math.random()*1.2:0}
+  else{moving=true;d.multiplyScalar(1/L);g.position.addScaledVector(d,sp*dt*(k==='guppy'?1+.3*Math.sin(T+o.ph):1));
+   if(k!=='jellyfish'){let df=Math.atan2(-d.z,d.x)-o.yaw;df=Math.atan2(Math.sin(df),Math.cos(df));o.yaw+=df*Math.min(1,dt*2.5);g.rotation.y=o.yaw}}}
+ if(k==='shrimp')g.position.y=b.y0+(moving?.008*Math.sin(T*6+o.ph):0);
+ clampP(b,g.position);
+ if(k==='guppy')o.tail.rotation.y=Math.sin(T*(moving?9:4)+o.ph)*.5;
+ if(k==='jellyfish'){const s=Math.sin(T*2+o.ph);o.bell.scale.set(1+.12*s,o.bell.scale.y,1+.12*s);o.bell.position.y=.02*s;g.position.y+=Math.sin(T*.8+o.ph)*.02*dt;
+  o.tent.forEach((p,i)=>{p.rotation.x=Math.sin(T*1.5+i+o.ph)*.25;p.rotation.z=Math.cos(T*1.2+i*1.7+o.ph)*.25;p.scale.y=1-.1*s})}}
+
+/* ---------- 카메라 ---------- */
+let mode='room';const ROOM={p:new THREE.Vector3(.8,3.6,7.2),l:new THREE.Vector3(.5,2.4,-2.2)},camT={p:ROOM.p.clone(),l:ROOM.l.clone()},camL=ROOM.l.clone();
+cam.position.copy(ROOM.p);
+function updTarget(){if(mode==='tank'&&S.aquarium){const D=DIM[S.aquarium.tankShape],t=Math.tan(22.5*Math.PI/180),dist=Math.max(D.h*SC*1.3/2/t,D.w*SC*1.2/2/(t*cam.aspect))+D.d*SC/2,y=1.8+D.h*SC/2;
+  camT.p.set(2.5,y,-2.15+dist);camT.l.set(2.5,y,-2.15)}else{camT.p.copy(ROOM.p);camT.l.copy(ROOM.l)}}
+function setView(m){mode=m==='tank'&&S.aquarium?'tank':'room';updTarget();render()}
+new ResizeObserver(()=>{const w=view.clientWidth,h=view.clientHeight;R.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix();updTarget()}).observe(view);
+
+/* ---------- UI ---------- */
+const bt=(a,v,txt,on)=>`<button data-a="${a}" data-v="${v}" class="${on?'on':''}">${txt}</button>`;
+function critUI(a){const kinds=a.type==='freshwater'?['guppy','shrimp']:['jellyfish'],full=a.creatures.length>=5;
+ let h=`<h3>${a.type==='freshwater'?'생물':'해파리'} ${a.creatures.length}/5</h3>`;
+ for(const k of kinds){h+='<div class="row" style="margin-bottom:6px">';for(const v in VAR[k]){const d=VAR[k][v];
+  h+=`<button data-a="add" data-k="${k}" data-v="${v}" ${full?'disabled':''}>${d[1]!=null?`<i class="dot" style="background:${hex(d[1])}"></i>`:''}${k==='jellyfish'?'':KIND[k]+' '}${d[0]} +</button>`}h+='</div>'}
+ return h+a.creatures.map(c=>`<div class="li"><span>${KIND[c.kind]} · ${VAR[c.kind][c.variant][0]}</span><button data-a="del" data-v="${c.id}">제거</button></div>`).join('')}
+const lvUI=a=>`<h3>조명 밝기 <span id="lvv">${a.lightLevel}%</span></h3><input type="range" id="lv" min="10" max="100" step="1" value="${a.lightLevel}" style="width:100%">`;
+function render(){const a=S.aquarium;
+ $('#vroom').classList.toggle('on',mode==='room');$('#vtank').classList.toggle('on',mode==='tank');$('#vtank').disabled=!a;
+ $('#blight').textContent='방 조명 '+(S.roomLightOn?'ON':'OFF');$('#breset').style.display=a?'':'none';
+ let h=`<div><b>현재 어항:</b> ${a?(a.type==='freshwater'?'담수 어항':'해파리 어항'):'없음 (빈 선반)'}</div>`;
+ if(!a)h+='<h3>어항 설치</h3><button class="big" data-a="install" data-v="freshwater">담수 어항 설치</button><button class="big" data-a="install" data-v="jellyfish">해파리 어항 설치</button>';
+ else{h+='<h3>수조 형태</h3><div class="row">'+TS[a.type].map(s=>bt('shape',s,SH[s],a.tankShape===s)).join('')+'</div>';
+  if(a.type==='freshwater'){
+   h+='<h3>바닥재</h3><div class="row">'+Object.keys(SUB).map(k=>`<button data-a="sub" data-v="${k}" class="${a.substrate===k?'on':''}"><i class="dot" style="background:${hex(SUB[k][1])}"></i>${SUB[k][0]}</button>`).join('')+'</div>';
+   h+='<h3>장식품</h3><div class="row">'+Object.keys(DEC).map(k=>`<label class="ck"><input type="checkbox" data-dec="${k}" ${a.decorations[k]?'checked':''}>${DEC[k]}</label>`).join('')+'</div>';
+   h+='<h3>조명</h3><div>흰색 · 고정</div>'}
+  else h+='<h3>조명 색상</h3><div class="row">'+Object.keys(LC).map(k=>`<button data-a="lc" data-v="${k}" class="${a.lightColor===k?'on':''}"><i class="dot" style="background:${hex(LC[k])}"></i>${LN[k]}</button>`).join('')+'</div>';
+  h+=lvUI(a)+critUI(a)}
+ $('#panel').innerHTML=h}
+let tt;function toast(m){const t=$('#toast');t.textContent=m;t.style.opacity=1;clearTimeout(tt);tt=setTimeout(()=>t.style.opacity=0,1800)}
+function apply(reshape){save();rebuildTank();syncCrit();if(reshape)objs.forEach(place);if(!S.aquarium)mode='room';updTarget();render()}
+const uid=()=>'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+$('#panel').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset,a=S.aquarium;
+ if(d.a==='install'&&!a&&TS[d.v]){S.aquarium=newAq(d.v);apply(true)}
+ else if(!a)return;
+ else if(d.a==='shape'&&TS[a.type].includes(d.v)){a.tankShape=d.v;apply(true)}
+ else if(d.a==='sub'&&a.type==='freshwater'&&SUB[d.v]){a.substrate=d.v;apply()}
+ else if(d.a==='lc'&&a.type==='jellyfish'&&LC[d.v]){a.lightColor=d.v;apply()}
+ else if(d.a==='add'){const ok=a.type==='freshwater'?['guppy','shrimp']:['jellyfish'];
+  if(!ok.includes(d.k)||!VAR[d.k][d.v])return;if(a.creatures.length>=5)return toast('생물은 최대 5마리까지 넣을 수 있어요');
+  a.creatures.push({id:uid(),kind:d.k,variant:d.v});apply()}
+ else if(d.a==='del'){a.creatures=a.creatures.filter(c=>c.id!==d.v);apply()}});
+$('#panel').addEventListener('change',e=>{const k=e.target.dataset.dec,a=S.aquarium;if(a&&a.type==='freshwater'&&DEC[k]){a.decorations[k]=e.target.checked;apply()}});
+$('#panel').addEventListener('input',e=>{if(e.target.id!=='lv'||!S.aquarium)return;const v=Math.max(10,Math.min(100,+e.target.value||40));S.aquarium.lightLevel=v;$('#lvv').textContent=v+'%';lightApply();save()});
+$('#vroom').onclick=()=>setView('room');$('#vtank').onclick=()=>setView('tank');
+$('#blight').onclick=()=>{S.roomLightOn=!S.roomLightOn;save();render()};
+$('#breset').onclick=()=>{if(S.aquarium&&confirm('어항의 모든 설정(유형·생물·바닥재·장식품·조명)이 삭제되고 선반이 비워집니다. 초기화할까요?')){S.aquarium=null;apply()}};
+
+/* ---------- 루프 ---------- */
+const clock=new THREE.Clock();
+(function loop(){requestAnimationFrame(loop);const dt=Math.min(clock.getDelta(),.05),T=clock.elapsedTime,k=1-Math.exp(-dt*3),k2=1-Math.exp(-dt*5);
+ cam.position.lerp(camT.p,k);camL.lerp(camT.l,k);cam.lookAt(camL);
+ room.intensity+=((S.roomLightOn?.75:0)-room.intensity)*k2;hemi.intensity+=((S.roomLightOn?.35:.04)-hemi.intensity)*k2;
+ if(S.aquarium)objs.forEach(o=>upd(o,dt,T));R.render(scene,cam)})();
+apply(false);
+</script></body></html>
